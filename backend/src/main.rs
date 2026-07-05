@@ -1,4 +1,4 @@
-use axum::{Router, http::StatusCode, response::Html, routing::get};
+use axum::{Router, http::StatusCode, response::Html, routing::get, routing::post};
 use tower_http::services::{ServeDir, ServeFile};
 mod db;
 
@@ -12,9 +12,10 @@ async fn main() {
 
     //let index_html = ServeFile::new("static/index.html");
 
+    //.route("/", get(Html(include_str!("../static/index.html"))))
     // build our application with a single route
     let app = Router::new()
-        .route("/", get(Html(include_str!("../static/index.html"))))
+        .route("/file/export", post(|| async { Html("Gello") }))
         .fallback_service(ServeDir::new("static"));
 
     // run our app with hyper, listening globally on port 3000
