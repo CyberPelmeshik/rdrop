@@ -1,6 +1,8 @@
-use axum::{Router, http::StatusCode, response::Html, routing::get, routing::post};
+use axum::{Router, http::StatusCode, response::Html, routing::any, routing::get, routing::post};
 use tower_http::services::{ServeDir, ServeFile};
-mod db;
+
+mod ws;
+use ws::handler;
 
 //async fn post_file() {
 
@@ -8,15 +10,7 @@ mod db;
 
 #[tokio::main]
 async fn main() {
-    db::init_db().await.unwrap();
-
-    //let index_html = ServeFile::new("static/index.html");
-
-    //.route("/", get(Html(include_str!("../static/index.html"))))
-    // build our application with a single route
-    let app = Router::new()
-        .route("/file/export", post(|| async { Html("Gello") }))
-        .fallback_service(ServeDir::new("static"));
+    let app = Router::new().route("/ws", any(ws::handler));
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

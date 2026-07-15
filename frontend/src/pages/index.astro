@@ -12,6 +12,12 @@
         <title>Astro</title>
     </head>
     <body>
-        <input type="button" value="Отправить" />
+        <form enctype="multipart/form-data" method="post" name="fileinfo">
+            <label>Выберите файл:</label>
+            <input type="file" name="file" required="" />
+            <input type="button" value="Отправить" onclick="sendFile()" />
+        </form>
+
+        <script src="/app.js" is:inline defer></script>
     </body>
 </html>
