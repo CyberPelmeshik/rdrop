@@ -41,7 +41,7 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                 println!("Получено сообщение: {}", inner_msg.to_text().unwrap());
                 socket.send(inner_msg.into()).await.unwrap();
             } else {
-                // client disconnected
+                // client  disconnected
                 return;
             }
         }
