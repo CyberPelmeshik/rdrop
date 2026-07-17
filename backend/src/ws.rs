@@ -22,6 +22,24 @@ pub async fn handler(ws: WebSocketUpgrade, state: State<AppState>) -> Response {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
+pub fn send_users(state: &State<AppState>, current_user: &Uuid) -> Message {
+    let users = state.info.read().unwrap();
+    let mut users_info: Vec<serde_json::Value> = Vec::new();
+
+    for (uuid, user) in users.iter() {
+        if uuid != current_user {
+            users_info
+                .push(serde_json::json!({"id" : uuid.to_string(), "name": user.name.clone()}));
+        }
+    }
+
+    Message::Text(
+        serde_json::json!({ "type": "user_list", "users": users_info})
+            .to_string()
+            .into(),
+    )
+}
+
 async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
     let user_id: Uuid = Uuid::new_v4();
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -34,6 +52,8 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
             sender: tx,
         },
     );
+
+    socket.send(send_users(&state, &user_id)).await.unwrap();
 
     loop {
         tokio::select! {
