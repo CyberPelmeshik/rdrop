@@ -90,10 +90,8 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                                             if let Ok(r_target) = Uuid::parse_str(sent_to) {
                                                 relay_target = r_target.into();
                                             }
-
                                         };
                                     }
-
                                     _ => {}
                                 }
                             }
@@ -122,6 +120,7 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                     }
                 }
             }
+            
             forward_msg = rx.recv() => {
                 if let Some(msg) = forward_msg {
                     if socket.send(msg).await.is_err() { break; }
