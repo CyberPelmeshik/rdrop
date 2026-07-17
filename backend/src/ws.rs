@@ -6,7 +6,7 @@ use axum::{
     routing::any,
 };
 use std::{num::ParseIntError, time::Duration};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::interval;
 use uuid::Uuid;
 
@@ -24,7 +24,8 @@ pub async fn handler(ws: WebSocketUpgrade, state: State<AppState>) -> Response {
 
 async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
     let user_id: Uuid = Uuid::new_v4();
-    let (tx, rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut relay_target: Option<Uuid> = None;
 
     state.info.write().unwrap().insert(
         user_id,
@@ -35,64 +36,80 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
     );
 
     loop {
-        /*
-        timer.tick().await;
-        //println!("Tick, отправляю клиенту {}", number);
-        socket
-            .send(format!("Hello {}", number).into())
-            .await
-            .unwrap();
-        number += 1;
-        */
         tokio::select! {
             msg = socket.recv() => {
-                Some(Ok(msg)) => match msg {
-                    Message::Text(text) => {
-                        let json_ = serde_json::from_str::<Command>(&text);
-                        if let Ok(command) = json_ {
-                            match command.name.as_str() {
-                                "ping" => {
-                                    socket.send(Message::Text("pong".into())).await.unwrap();
+                    match msg {
+                    Some(Ok(msg)) => match msg {
+                        Message::Text(text) => {
+                            let json_ = serde_json::from_str::<Command>(&text);
+                            if let Ok(command) = json_ {
+                                match command.name.as_str() {
+                                    "ping" => {
+                                        socket.send(Message::Text("pong".into())).await.unwrap();
+                                    }
+                                    "change_name" => {
+                                        if let Some(new_name) = command.args.get(0) {
+                                            if let Some(info) =
+                                                state.info.write().unwrap().get_mut(&user_id)
+                                            {
+                                                info.name = new_name.clone();
+                                            }
+                                        };
+                                    }
+                                    "create_chanel" => {
+                                        if let Some(new_name) = command.args.get(0) {
+                                            if let Some(info) =
+                                                state.info.write().unwrap().get_mut(&user_id)
+                                            {
+                                                info.name = new_name.clone();
+                                            }
+                                        };
+                                    }
+                                    "sent_to" => {
+                                        if let Some(sent_to) = command.args.get(0) {
+                                            if let Ok(r_target) = Uuid::parse_str(sent_to) {
+                                                relay_target = r_target.into();
+                                            }
+
+                                        };
+                                    }
+
+                                    _ => {}
                                 }
-                                "change_name" => {
-                                    if let Some(new_name) = command.args.get(0) {
-                                        if let Some(info) =
-                                            state.info.write().unwrap().get_mut(&user_id)
-                                        {
-                                            info.name = new_name.clone();
-                                        }
-                                    };
-                                }
-                                "create_chanel" => {
-                                    if let Some(new_name) = command.args.get(0) {
-                                        if let Some(info) =
-                                            state.info.write().unwrap().get_mut(&user_id)
-                                        {
-                                            info.name = new_name.clone();
-                                        }
-                                    };
-                                }
-                                _ => {}
                             }
                         }
+                        Message::Binary(data) => {
+                            if let Some(target_id) = relay_target {
+                                if let Some(target_user) = state.info.read().unwrap().get(&target_id) {
+                                    let tx_target = target_user.sender.clone();
+                                    let _ = tx_target.send(Message::Binary(data));
+                                }
+                            }
+                        }
+                        Message::Ping(_) => {}
+                        Message::Pong(_) => {}
+                        Message::Close(_) => {}
+                    },
+                    Some(Err(_)) => {
+                        state.info.write().unwrap().remove(&user_id);
+                        println!("Отключился юзер {}", user_id);
+                        return;
                     }
-                    Message::Binary(_) => {}
-                    Message::Ping(_) => {}
-                    Message::Pong(_) => {}
-                    Message::Close(_) => {}
-                },
-                Some(Err(_)) => {
-                    state.info.write().unwrap().remove(&user_id);
-                    println!("Отключился юзер {}", user_id);
-                    return;
-                }
-                None => {
-                    state.info.write().unwrap().remove(&user_id);
-                    println!("Отключился юзер {}", user_id);
-                    return;
+                    None => {
+                        state.info.write().unwrap().remove(&user_id);
+                        println!("Отключился юзер {}", user_id);
+                        return;
+                    }
                 }
             }
-
+            forward_msg = rx.recv() => {
+                if let Some(msg) = forward_msg {
+                    if socket.send(msg).await.is_err() { break; }
+                }
+                else {
+                    break;
+                }
+            }
         }
     }
 }

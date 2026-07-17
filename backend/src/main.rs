@@ -36,12 +36,6 @@ pub struct AppState {
     pub info: Arc<RwLock<HashMap<Uuid, User>>>,
 }
 
-async fn uuid_handler(mut uuids: Vec<Uuid>) -> Uuid {
-    let uuid = Uuid::new_v4();
-    uuids.push(uuid);
-    uuid
-}
-
 #[tokio::main]
 async fn main() {
     let state: AppState = AppState {
