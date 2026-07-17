@@ -74,6 +74,7 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                                             {
                                                 info.name = new_name.clone();
                                             }
+                                            socket.send(send_users(&state, &user_id)).await.unwrap();
                                         };
                                     }
                                     "create_chanel" => {
@@ -120,7 +121,7 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                     }
                 }
             }
-            
+
             forward_msg = rx.recv() => {
                 if let Some(msg) = forward_msg {
                     if socket.send(msg).await.is_err() { break; }
