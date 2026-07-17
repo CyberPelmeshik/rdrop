@@ -3,7 +3,7 @@ let socket = new WebSocket("ws://localhost:3000/ws");
 socket.onopen = function(e) {
   console.log("[open] Соединение установлено");
   console.log("Отправляем данные на сервер");
-  socket.send("Меня зовут Джон");
+  socket.send(JSON.stringify({name: "ping", args: []}));
 };
 
 

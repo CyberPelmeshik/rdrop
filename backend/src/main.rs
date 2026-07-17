@@ -1,6 +1,9 @@
-use std::str;
+use axum::{
+    Router, extract::ws::Message, http::StatusCode, response::Html, routing::any, routing::get,
+    routing::post,
+};
+use tokio::sync::mpsc;
 
-use axum::{Router, http::StatusCode, response::Html, routing::any, routing::get, routing::post};
 use tower_http::services::{ServeDir, ServeFile};
 
 mod ws;
@@ -9,8 +12,28 @@ use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 #[derive(Clone)]
+pub struct FileMeta {
+    pub name: String,
+    pub size: u64,
+    pub path: String,
+    pub owner: String,
+    pub uploaded_at: std::time::SystemTime,
+}
+
+#[derive(Clone)]
+pub struct Files {
+    pub info: Arc<RwLock<HashMap<Uuid, FileMeta>>>,
+}
+
+pub struct User {
+    pub name: String,
+    pub sender: mpsc::UnboundedSender<Message>,
+    //pub ip: std::net::Ipv4Addr,
+}
+
+#[derive(Clone)]
 pub struct AppState {
-    pub info: Arc<RwLock<HashMap<Uuid, String>>>,
+    pub info: Arc<RwLock<HashMap<Uuid, User>>>,
 }
 
 async fn uuid_handler(mut uuids: Vec<Uuid>) -> Uuid {
