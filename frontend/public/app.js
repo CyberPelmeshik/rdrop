@@ -24,6 +24,18 @@ const receivedList = document.getElementById('received-list');
 const connectionStatus = document.getElementById('connection-status');
 const fileNameLabel = document.getElementById('file-name-label');
 
+function generateUUID() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for non-secure contexts (HTTP without localhost)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // ---- WebSocket ----
 function connect() {
   console.log('[rDrop] Подключение к', WS_URL);
@@ -80,6 +92,9 @@ function connect() {
           transfer.ended = true;
           if (transfer.writer && transfer.received === transfer.totalChunks) {
             finalizeOPFSTransfer(transferId);
+          } else if (transfer.chunks && transfer.received === transfer.totalChunks) {
+            assembleInMemory(transfer);
+            transfers.delete(transferId);
           }
         }
       }
@@ -178,7 +193,7 @@ fileInput.addEventListener('change', () => {
 
 // ---- File sending (chunked) ----
 async function sendFile(file) {
-  const transferId = crypto.randomUUID();
+  const transferId = generateUUID();
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
   // Notify receiver
@@ -241,8 +256,15 @@ function handleIncomingFile(blob) {
       if (transfer.ended && transfer.received === transfer.totalChunks) {
         finalizeOPFSTransfer(transferId);
       }
+    } else if (transfer.chunks) {
+      // In-memory fallback active (OPFS unavailable)
+      transfer.chunks[chunkIndex] = chunkData;
+      if (transfer.ended && transfer.received === transfer.totalChunks) {
+        assembleInMemory(transfer);
+        transfers.delete(transferId);
+      }
     } else {
-      // Writer not ready yet — buffer until initOPFSWriter flushes
+      // Writer not ready yet — buffer until initOPFSWriter decides
       transfer.pendingChunks.push({ chunkIndex, chunkData });
     }
   });
@@ -271,8 +293,38 @@ async function initOPFSWriter(transferId, name) {
       await finalizeOPFSTransfer(transferId);
     }
   } catch (e) {
-    console.error('[rDrop] OPFS init failed:', e);
+    console.warn('[rDrop] OPFS unavailable, using in-memory fallback:', e.message);
+    transfer.chunks = [];
+    for (const { chunkIndex, chunkData } of transfer.pendingChunks) {
+      transfer.chunks[chunkIndex] = chunkData;
+    }
+    transfer.pendingChunks = [];
+
+    if (transfer.ended && transfer.received === transfer.totalChunks) {
+      assembleInMemory(transfer);
+      transfers.delete(transferId);
+    }
   }
+}
+
+function assembleInMemory(transfer) {
+  const fileBytes = new Uint8Array(transfer.size);
+  let offset = 0;
+  for (const chunk of transfer.chunks) {
+    fileBytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  const blob = new Blob([fileBytes], { type: transfer.type || '' });
+  const url = URL.createObjectURL(blob);
+  const entry = {
+    id: generateUUID(),
+    url,
+    name: transfer.name || `file-${receivedFiles.length + 1}`,
+    time: new Date().toLocaleTimeString(),
+  };
+  receivedFiles.unshift(entry);
+  renderReceivedFiles();
+  console.log('[rDrop] Трансфер завершён (in-memory):', transfer.name);
 }
 
 async function finalizeOPFSTransfer(transferId) {
@@ -284,7 +336,7 @@ async function finalizeOPFSTransfer(transferId) {
     const file = await transfer.fileHandle.getFile();
     const url = URL.createObjectURL(file);
     const entry = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       url,
       name: transfer.name || `file-${receivedFiles.length + 1}`,
       time: new Date().toLocaleTimeString(),
