@@ -95,9 +95,6 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                             let json_ = serde_json::from_str::<Command>(&text);
                             if let Ok(command) = json_ {
                                 match command.name.as_str() {
-                                    "ping" => {
-                                        socket.send(Message::Text("pong".into())).await.unwrap();
-                                    }
                                     "change_name" => {
                                         if let Some(new_name) = command.args.get(0) {
                                             if let Some(info) =
@@ -124,10 +121,25 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                                             }
                                         };
                                     }
-                                    "transfer_start" => {
-
+                                    "ping" => {
+                                        socket.send(Message::Text("pong".into())).await.unwrap();
                                     }
+                                    "transfer_start" => {
+                                        if let Some(target_id) = relay_target {
+                                            if let Some(info) = state.info.read().unwrap().get(&target_id) {
+                                                let _ = info.sender.send(Message::Text(text));
 
+                                            }
+                                        }
+                                    }
+                                    "transfer_end" => {
+                                        if let Some(target_id) = relay_target {
+                                            if let Some(info) = state.info.read().unwrap().get(&target_id) {
+                                                let _ = info.sender.send(Message::Text(text));
+
+                                            }
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }
