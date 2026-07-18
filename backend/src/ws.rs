@@ -124,6 +124,10 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                                             }
                                         };
                                     }
+                                    "transfer_start" => {
+
+                                    }
+
                                     _ => {}
                                 }
                             }

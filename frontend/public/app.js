@@ -9,6 +9,8 @@ let myId = '';
 let users = [];
 let selectedUserId = null;
 let receivedFiles = [];
+const transfers = new Map(); // transfer_id → { name, type, size, totalChunks, chunks[], received }
+const CHUNK_SIZE = 64 * 1024; // 64 KB
 
 // ---- DOM refs ----
 const nameInput = document.getElementById('name-input');
@@ -54,6 +56,42 @@ function connect() {
       }
       if (msg.type === 'welcome') {
         myId = msg.id;
+      }
+      if (msg.type === 'transfer_start') {
+        const [transferId, name, mimeType, size, totalChunks] = msg.args;
+        transfers.set(transferId, {
+          name,
+          type: mimeType,
+          size: Number(size),
+          totalChunks: Number(totalChunks),
+          chunks: [],
+          received: 0,
+        });
+        console.log('[rDrop] Начало трансфера:', name, 'чанков:', totalChunks);
+      }
+      if (msg.type === 'transfer_end') {
+        const transferId = msg.args[0];
+        const transfer = transfers.get(transferId);
+        if (transfer && transfer.received === transfer.totalChunks) {
+          const fileBytes = new Uint8Array(transfer.size);
+          let offset = 0;
+          for (const chunk of transfer.chunks) {
+            fileBytes.set(chunk, offset);
+            offset += chunk.length;
+          }
+          const blob = new Blob([fileBytes], { type: transfer.type || '' });
+          const url = URL.createObjectURL(blob);
+          const entry = {
+            id: crypto.randomUUID(),
+            url,
+            name: transfer.name || `file-${receivedFiles.length + 1}`,
+            time: new Date().toLocaleTimeString(),
+          };
+          receivedFiles.unshift(entry);
+          renderReceivedFiles();
+          console.log('[rDrop] Трансфер завершён:', transfer.name);
+        }
+        transfers.delete(transferId);
       }
     } catch {
       console.log('[rDrop] Не-JSON сообщение:', event.data);
@@ -134,30 +172,7 @@ sendBtn.addEventListener('click', () => {
     alert('Выберите файл для отправки.');
     return;
   }
-  file.arrayBuffer().then((buf) => {
-    // Build metadata header
-    const meta = JSON.stringify({
-      name: file.name,
-      type: file.type,
-      size: file.size,
-    });
-    const encoder = new TextEncoder();
-    const metaBytes = encoder.encode(meta);
-
-    // 4-byte big-endian length prefix
-    const header = new ArrayBuffer(4);
-    new DataView(header).setUint32(0, metaBytes.length, false);
-
-    // Combine: header + JSON metadata + file bytes
-    const fileBytes = new Uint8Array(buf);
-    const combined = new Uint8Array(
-      4 + metaBytes.length + fileBytes.length
-    );
-    combined.set(new Uint8Array(header), 0);
-    combined.set(metaBytes, 4);
-    combined.set(fileBytes, 4 + metaBytes.length);
-
-    ws.send(combined.buffer);
+  sendFile(file).then(() => {
     fileNameLabel.textContent = 'Отправлено ✓';
     fileInput.value = '';
     setTimeout(() => {
@@ -171,34 +186,65 @@ fileInput.addEventListener('change', () => {
   fileNameLabel.textContent = file ? file.name : 'Файл не выбран';
 });
 
+// ---- File sending (chunked) ----
+async function sendFile(file) {
+  const transferId = crypto.randomUUID();
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+  // Notify receiver
+  sendCommand('transfer_start', [
+    transferId,
+    file.name,
+    file.type || '',
+    String(file.size),
+    String(totalChunks),
+  ]);
+
+  const encoder = new TextEncoder();
+  const idBytes = encoder.encode(transferId);
+  const headerSize = 8 + idBytes.length;
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const chunk = file.slice(start, end);
+    const buf = await chunk.arrayBuffer();
+
+    const combined = new Uint8Array(headerSize + buf.byteLength);
+    const view = new DataView(combined.buffer);
+    view.setUint32(0, idBytes.length, false);
+    combined.set(idBytes, 4);
+    view.setUint32(4 + idBytes.length, i, false);
+    combined.set(new Uint8Array(buf), headerSize);
+
+    ws.send(combined.buffer);
+  }
+
+  sendCommand('transfer_end', [transferId]);
+}
+
 // ---- File receiving ----
 function handleIncomingFile(blob) {
   blob.arrayBuffer().then((buf) => {
     const view = new DataView(buf);
-    if (buf.byteLength < 4) return;
+    if (buf.byteLength < 8) return;
 
-    // Read JSON metadata length (big-endian)
-    const metaLen = view.getUint32(0, false);
-    if (4 + metaLen > buf.byteLength) return;
+    const idLen = view.getUint32(0, false);
+    if (8 + idLen > buf.byteLength) return;
 
-    // Extract JSON metadata
-    const metaBytes = new Uint8Array(buf, 4, metaLen);
+    const idBytes = new Uint8Array(buf, 4, idLen);
     const decoder = new TextDecoder();
-    const meta = JSON.parse(decoder.decode(metaBytes));
+    const transferId = decoder.decode(idBytes);
 
-    // Extract file body
-    const fileBytes = new Uint8Array(buf, 4 + metaLen);
-    const fileBlob = new Blob([fileBytes], { type: meta.type || '' });
-    const url = URL.createObjectURL(fileBlob);
+    const chunkIndex = view.getUint32(4 + idLen, false);
+    const dataStart = 8 + idLen;
+    const chunkData = new Uint8Array(buf, dataStart);
 
-    const entry = {
-      id: crypto.randomUUID(),
-      url,
-      name: meta.name || `file-${receivedFiles.length + 1}`,
-      time: new Date().toLocaleTimeString(),
-    };
-    receivedFiles.unshift(entry);
-    renderReceivedFiles();
+    const transfer = transfers.get(transferId);
+    if (transfer) {
+      transfer.chunks[chunkIndex] = chunkData;
+      transfer.received++;
+    }
   });
 }
 
