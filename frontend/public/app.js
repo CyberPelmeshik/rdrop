@@ -363,7 +363,7 @@ function renderReceivedFiles() {
         <span class="file-icon">📥</span>
         <span class="file-name">${f.name}</span>
         <span class="file-time">${f.time}</span>
-        <a class="btn-download" href="${f.url}" download>Скачать</a>
+        <a class="btn-download" href="${f.url}" download="${f.name.replace(/"/g, '&quot;')}">Скачать</a>
       </li>`
     )
     .join('');
