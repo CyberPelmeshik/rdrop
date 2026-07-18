@@ -5,6 +5,7 @@ console.log('[rDrop] WebSocket URL:', WS_URL);
 // ---- State ----
 let ws = null;
 let myName = '';
+let myId = '';
 let users = [];
 let selectedUserId = null;
 let receivedFiles = [];
@@ -47,9 +48,12 @@ function connect() {
       const msg = JSON.parse(event.data);
       console.log('[rDrop] Команда от сервера:', msg);
       if (msg.type === 'user_list') {
-        users = msg.users || [];
+        users = (msg.users || []).filter(u => u.id !== myId);
         console.log('[rDrop] Список пользователей:', users.length);
         renderUserList();
+      }
+      if (msg.type === 'welcome') {
+        myId = msg.id;
       }
     } catch {
       console.log('[rDrop] Не-JSON сообщение:', event.data);
@@ -131,7 +135,29 @@ sendBtn.addEventListener('click', () => {
     return;
   }
   file.arrayBuffer().then((buf) => {
-    ws.send(buf);
+    // Build metadata header
+    const meta = JSON.stringify({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    });
+    const encoder = new TextEncoder();
+    const metaBytes = encoder.encode(meta);
+
+    // 4-byte big-endian length prefix
+    const header = new ArrayBuffer(4);
+    new DataView(header).setUint32(0, metaBytes.length, false);
+
+    // Combine: header + JSON metadata + file bytes
+    const fileBytes = new Uint8Array(buf);
+    const combined = new Uint8Array(
+      4 + metaBytes.length + fileBytes.length
+    );
+    combined.set(new Uint8Array(header), 0);
+    combined.set(metaBytes, 4);
+    combined.set(fileBytes, 4 + metaBytes.length);
+
+    ws.send(combined.buffer);
     fileNameLabel.textContent = 'Отправлено ✓';
     fileInput.value = '';
     setTimeout(() => {
@@ -147,15 +173,33 @@ fileInput.addEventListener('change', () => {
 
 // ---- File receiving ----
 function handleIncomingFile(blob) {
-  const url = URL.createObjectURL(blob);
-  const entry = {
-    id: crypto.randomUUID(),
-    url,
-    name: `file-${receivedFiles.length + 1}`,
-    time: new Date().toLocaleTimeString(),
-  };
-  receivedFiles.unshift(entry);
-  renderReceivedFiles();
+  blob.arrayBuffer().then((buf) => {
+    const view = new DataView(buf);
+    if (buf.byteLength < 4) return;
+
+    // Read JSON metadata length (big-endian)
+    const metaLen = view.getUint32(0, false);
+    if (4 + metaLen > buf.byteLength) return;
+
+    // Extract JSON metadata
+    const metaBytes = new Uint8Array(buf, 4, metaLen);
+    const decoder = new TextDecoder();
+    const meta = JSON.parse(decoder.decode(metaBytes));
+
+    // Extract file body
+    const fileBytes = new Uint8Array(buf, 4 + metaLen);
+    const fileBlob = new Blob([fileBytes], { type: meta.type || '' });
+    const url = URL.createObjectURL(fileBlob);
+
+    const entry = {
+      id: crypto.randomUUID(),
+      url,
+      name: meta.name || `file-${receivedFiles.length + 1}`,
+      time: new Date().toLocaleTimeString(),
+    };
+    receivedFiles.unshift(entry);
+    renderReceivedFiles();
+  });
 }
 
 function renderReceivedFiles() {

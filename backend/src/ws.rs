@@ -40,6 +40,29 @@ pub fn send_users(state: &State<AppState>, current_user: &Uuid) -> Message {
     )
 }
 
+pub fn broadcast_users(state: &State<AppState>) {
+    let users = state.info.read().unwrap();
+    let mut users_info: Vec<serde_json::Value> = Vec::new();
+    let mut senders: Vec<mpsc::UnboundedSender<Message>> = Vec::new();
+
+    for (uuid, user) in users.iter() {
+        users_info.push(serde_json::json!({"id" : uuid.to_string(), "name": user.name.clone()}));
+        senders.push(user.sender.clone());
+    }
+
+    let users_json = serde_json::json!({ "type": "user_list", "users": users_info}).to_string();
+
+    for sender in senders.iter() {
+        let _ = sender.send(users_json.clone().into());
+    }
+}
+
+fn delete_user(user_id: &Uuid, state: State<AppState>) {
+    state.info.write().unwrap().remove(&user_id);
+    broadcast_users(&state);
+    println!("Отключился юзер {}", user_id);
+}
+
 async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
     let user_id: Uuid = Uuid::new_v4();
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -53,7 +76,15 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
         },
     );
 
-    socket.send(send_users(&state, &user_id)).await.unwrap();
+    let welcom_msg = Message::Text(
+        serde_json::json!({ "type": "welcome", "id": user_id.to_string()})
+            .to_string()
+            .into(),
+    );
+
+    let _ = socket.send(welcom_msg).await.unwrap();
+
+    broadcast_users(&state);
 
     loop {
         tokio::select! {
@@ -74,7 +105,7 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                                             {
                                                 info.name = new_name.clone();
                                             }
-                                            socket.send(send_users(&state, &user_id)).await.unwrap();
+                                            broadcast_users(&state);
                                         };
                                     }
                                     "create_chanel" => {
@@ -110,13 +141,11 @@ async fn handle_socket(mut socket: WebSocket, state: State<AppState>) {
                         Message::Close(_) => {}
                     },
                     Some(Err(_)) => {
-                        state.info.write().unwrap().remove(&user_id);
-                        println!("Отключился юзер {}", user_id);
+                        delete_user(&user_id, state);
                         return;
                     }
                     None => {
-                        state.info.write().unwrap().remove(&user_id);
-                        println!("Отключился юзер {}", user_id);
+                        delete_user(&user_id, state);
                         return;
                     }
                 }
